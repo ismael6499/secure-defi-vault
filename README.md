@@ -1,39 +1,51 @@
-# 🏦 CryptoBank: Secure State Management & Reentrancy Protection
+# 🛡️ Secure DeFi Vault: Reentrancy-Hardened Protocol
 
-A secure implementation of a decentralized banking protocol on the EVM, focusing on preventing Reentrancy attacks and optimizing state storage costs.
+![Solidity](https://img.shields.io/badge/Solidity-0.8.24-363636?style=flat-square&logo=solidity)
+![Security](https://img.shields.io/badge/Pattern-Checks_Effects_Interactions-green?style=flat-square)
+![License](https://img.shields.io/badge/License-GPL_3.0-blue?style=flat-square)
 
-## 🚀 Engineering Context
+A secure reference implementation of a decentralized custody protocol (Vault). This project focuses on **architectural defense** against reentrancy vectors and state inconsistency.
 
-As a **Java Software Engineer**, creating a "Bank" application typically involves managing thread safety and ACID transactions. In **Solidity**, the paradigm shifts entirely towards **Gas Optimization** and **Reentrancy Protection**.
+Unlike traditional centralized ledgers where database transactions provide ACID properties, smart contracts require explicit ordering of operations to prevent malicious callbacks. This repository demonstrates the rigorous application of the **Checks-Effects-Interactions (CEI)** pattern to secure native Ether withdrawals without relying on heavy external libraries.
 
-This project translates classic OOP state management into smart contract logic, highlighting the critical security differences required when handling value on a public blockchain versus a centralized backend.
+## 🏗 Architecture & Design Decisions
 
-## 💡 Project Overview
+### 1. Defensive Architecture (CEI Pattern)
+- **Reentrancy Mitigation:**
+  - The `withdrawEther` logic is strictly ordered to update the internal state (`userBalance[msg.sender] -= _amount`) *before* triggering the external low-level call.
+  - **Impact:** This structural decision neutralizes reentrancy attacks. Even if the recipient is a malicious contract attempting to re-enter `withdrawEther` upon receiving funds, the state has already been decremented, causing the subsequent check (`if (_amount > userBalance)`) to fail (Revert).
 
-**CryptoBank** allows users to securely deposit and withdraw Ether. Unlike a standard implementation, this contract enforces strict business rules and administrative controls using low-level optimization techniques rather than high-level abstractions.
+### 2. Gas Optimization Strategy
+- **Zero-Cost Validation:**
+  - Replaced standard string-based requirements (`require(cond, "Reason")`) with **Custom Errors** (`error MaxBalanceReached()`).
+  - **Efficiency:** This reduces deployment bytecode size and eliminates runtime gas costs associated with memory allocation for ASCII encoding during reverts.
+- **Event Indexing:**
+  - Implemented `indexed` parameters in `EtherDeposit` and `EtherWithdraw` events to enable efficient off-chain filtering and historical data reconstruction by subgraphs.
 
-### 🔍 Key Technical Features:
+### 3. Access Control
+- **Role-Based Security:**
+  - Utilizes a reusable `onlyAdmin` modifier to enforce separation of duties for critical parameter changes (`modifyMaxBalance`).
 
-* **Security Pattern: Checks-Effects-Interactions (CEI):**
-    * **Defense Strategy:** The `withdrawEther` function strictly follows the CEI pattern: validating inputs first, updating the state (Effect) second, and performing the external call (Interaction) last.
-    * **Why:** This architectural choice is mandatory to prevent **Reentrancy attacks**, ensuring that even if the recipient is a malicious contract, it cannot re-enter the function to drain funds before the balance is updated.
+## 🛠 Tech Stack
 
-* **Efficient State Management:**
-    * **Mappings vs. HashMaps:** Utilized `mapping(address => uint256)` for O(1) balance lookups. Unlike Java's `HashMap`, Solidity mappings are not iterable, which necessitated specific design choices for data retrieval and updating.
+* **Core:** Solidity `^0.8.24`
+* **Security:** CEI (Checks-Effects-Interactions), Low-level Calls
+* **License:** GNU GPL v3
 
-* **Gas Optimization (Custom Errors):**
-    * **Bytecode Reduction:** Replaced expensive `require` strings with **Custom Errors** (e.g., `error MaxBalanceReached()`). This significantly reduces deployment costs and runtime gas consumption compared to storing ASCII strings on-chain.
+## 📝 Contract Interface
 
-* **Access Control:**
-    * Implemented a reusable `modifier onlyAdmin` to guard sensitive configuration functions, ensuring separation of duties.
+The system exposes a secure vault interface for ETH custody:
 
-## 🛠️ Stack & Tools
+```solidity
+// Secure withdrawal pattern
+function withdrawEther(uint256 _amount) external {
+    // 1. Check
+    if (_amount > userBalance[msg.sender]) revert InsufficientBalance();
 
-* **Language:** Solidity `^0.8.24`.
-* **Security:** CEI Pattern, Modifiers.
-* **Concepts:** State Management, Gas Profiling.
-* **License:** GPL-3.0.
+    // 2. Effect (State Update)
+    userBalance[msg.sender] -= _amount;
 
----
-
-*This project demonstrates secure financial logic implementation on the Ethereum Virtual Machine.*
+    // 3. Interaction (External Call)
+    (bool success, ) = msg.sender.call{value: _amount}("");
+    if (!success) revert TransferFailed();
+}
